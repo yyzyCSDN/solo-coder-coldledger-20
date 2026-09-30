@@ -38,7 +38,7 @@ class PackagingPolicy:
         for r in self.rules:
             start = r.effective_at.astimezone(timezone.utc)
             end = r.expires_at.astimezone(timezone.utc) if r.expires_at else None
-            if start <= x and (end is None or x < end) and r.scope in {"*", scope}:
+            if start <= x and (end is None or x <= end) and r.scope in {"*", scope}:
                 rows.append(r)
         return sorted(rows, key=lambda r: (-r.priority, r.scope == "*", r.key))
 
