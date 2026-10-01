@@ -1,9 +1,13 @@
 from dataclasses import dataclass,replace
 from datetime import datetime
+from coldledger.claims.excursions import DEFAULT_SEVERITY_THRESHOLDS,severity_from_exposure
 @dataclass(frozen=True)
 class Deviation:
     reference:str;severity:int;opened_at:datetime;owner:str;state:str='open';actions:tuple=();revision:int=0
 VALID={'open','investigating','mitigating','verification','closed'}
+def open_from_excursion(reference,excursion,owner,opened_at,thresholds=DEFAULT_SEVERITY_THRESHOLDS):
+    """Open a case whose severity comes from the excursion's time integral."""
+    return Deviation(reference,severity_from_exposure(excursion.exposure,thresholds),opened_at,owner)
 def add_action(case,actor,text,at):
     if case.state=='closed':raise ValueError('closed case')
     if not actor or not text:raise ValueError('actor and text required')

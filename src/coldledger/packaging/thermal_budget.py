@@ -1,16 +1,21 @@
 from dataclasses import dataclass
-from datetime import datetime,timezone
+from datetime import datetime
+from ..core.timeseries import Sample as Point, band_severity, integrate
+
+
 @dataclass(frozen=True)
-class Sample: at:datetime; celsius:float
-def exposure(samples,low,high):
-    if len(samples)<2:return 0.0
-    rows=sorted(samples,key=lambda x:x.at);score=0.0
-    for a,b in zip(rows,rows[1:]):
-        ta,tb=a.at.astimezone(timezone.utc),b.at.astimezone(timezone.utc);dt=(tb-ta).total_seconds()
-        if dt<=0: raise ValueError('duplicate time')
-        representative=a.celsius
-        if representative<low: sev=(low-representative)**1.35
-        elif representative>high: sev=(representative-high)**1.55
-        else: sev=0
-        score+=sev*dt/3600
-    return score
+class Sample:
+    at: datetime
+    celsius: float
+
+
+def exposure(samples, low, high, *, max_gap_seconds=None):
+    """Time-integrated thermal exposure in severity-hours.
+
+    Uses the shared trapezoidal integral (coldledger.core.timeseries) so
+    budgets, sampling trajectories and deviation cases agree on the same
+    series. Gaps wider than max_gap_seconds are rejected as sparse data
+    rather than interpolated over.
+    """
+    points = [Point(s.at, s.celsius) for s in samples]
+    return integrate(points, band_severity(low, high), max_gap_seconds=max_gap_seconds) / 3600.0
