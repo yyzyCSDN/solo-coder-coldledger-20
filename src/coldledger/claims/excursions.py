@@ -1,22 +1,63 @@
+"""Excursion detection on temperature sampling trajectories.
+
+Detected excursions carry the same time-integrated severity used by the
+packaging exposure budget (:mod:`coldledger.packaging.thermal_budget`), so a
+deviation case and its budget consumption are always scored with one
+integral. Sparse gaps are rejected and duplicate/replayed samples are
+reconciled by the shared core.
+"""
 from dataclasses import dataclass
-from datetime import datetime,timezone
+from datetime import datetime
+
+from ..core import thermal
+
+
 @dataclass(frozen=True)
-class Sample: at:datetime;value:float
+class Sample:
+    at: datetime
+    value: float
+
+
 @dataclass(frozen=True)
-class Excursion: start:datetime;end:datetime;peak:float
-def detect(samples,low,high,margin,min_seconds):
-    rows=sorted(samples,key=lambda s:s.at);out=[];start=None;peak=None;last=None
-    for s in rows:
-        t=s.at.astimezone(timezone.utc)
-        if last is not None and t<=last:raise ValueError('duplicate time')
-        outside=s.value<low or s.value>high
-        if start is None and outside:start=t;peak=s.value
+class Excursion:
+    start: datetime
+    end: datetime
+    peak: float
+    severity_integral: float = 0.0
+
+
+def detect(samples, low, high, margin, min_seconds, max_gap_seconds=None):
+    """Detect out-of-band excursions on a (possibly multi-segment) trajectory.
+
+    Cross-segment replay and repeated samples are merged by the shared
+    normalizer: identical samples at one instant are counted once, conflicting
+    ones raise ``ValueError``. Each emitted excursion is qualified by duration
+    and carries its shared severity*hours integral.
+    """
+    rows = thermal.normalize_rows(samples, max_gap_seconds)
+    out = []
+    start = None
+    peak = None
+    acc = thermal.SeverityAccumulator(low, high, max_gap_seconds)
+
+    for t, value in rows:
+        outside = value < low or value > high
+        if start is None and outside:
+            start = t
+            peak = value
+            acc.add(t, value)
         elif start is not None:
-            if abs(s.value-(low if s.value<low else high))>abs(peak-(low if peak<low else high)):peak=s.value
-            cleared=low+margin<=s.value<=high-margin
+            acc.add(t, value)
+            dev = thermal.deviation(value, low, high)
+            if dev != 0 and abs(dev) > abs(thermal.deviation(peak, low, high)):
+                peak = value
+            cleared = low + margin <= value <= high - margin
             if cleared:
-                if (t-start).total_seconds()>=min_seconds:out.append(Excursion(start,t,peak))
-                start=None;peak=None
-        last=t
-    if start is not None and last is not None and (last-start).total_seconds()>=min_seconds:out.append(Excursion(start,last,peak))
+                if (t - start).total_seconds() >= min_seconds:
+                    out.append(Excursion(start, t, peak, acc.total))
+                start = None
+                peak = None
+                acc = thermal.SeverityAccumulator(low, high, max_gap_seconds)
+    if start is not None and rows and (rows[-1][0] - start).total_seconds() >= min_seconds:
+        out.append(Excursion(start, rows[-1][0], peak, acc.total))
     return out

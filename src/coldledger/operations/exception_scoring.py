@@ -1,8 +1,12 @@
 from __future__ import annotations
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from statistics import median
 from math import exp
 from typing import Iterable
+
+from coldledger.claims.excursions import Excursion
+
 
 @dataclass(frozen=True)
 class ExceptionCase:
@@ -27,6 +31,34 @@ def raw_score(row: ExceptionCase) -> float:
     value_component = min(row.value / 10000.0, 50.0)
     uncertainty_penalty = row.uncertainty * 12.0
     return row.severity * 22.0 + age_component + value_component + flag_weight - uncertainty_penalty
+
+
+def case_from_excursion(
+    excursion: Excursion,
+    reference: str,
+    now: datetime,
+    uncertainty: float = 0.0,
+    flags: Iterable[str] = (),
+) -> ExceptionCase:
+    """Build a deviation case scored by the shared time-integrated severity.
+
+    The case's ``severity`` is the excursion's severity*hours integral (the
+    same number consumed by the exposure budget), so identical excursions
+    always receive identical severity instead of being judged by endpoint peak
+    alone.
+    """
+    age_hours = max(
+        0.0,
+        (now.astimezone(timezone.utc) - excursion.end.astimezone(timezone.utc)).total_seconds() / 3600.0,
+    )
+    return ExceptionCase(
+        reference=reference,
+        severity=excursion.severity_integral,
+        age_hours=age_hours,
+        value=max(0.0, excursion.peak),
+        uncertainty=uncertainty,
+        flags=frozenset(flags) | frozenset({"thermal"}),
+    )
 
 
 def normalized_probability(row: ExceptionCase) -> float:
